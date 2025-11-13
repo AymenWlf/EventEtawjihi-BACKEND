@@ -2,7 +2,13 @@ nelmio_cors:
   defaults:
     origin_regex: true
     allow_origin:
-      ["http://localhost:5173", "http://localhost:3000", "https://e-tawjihi.ma"]
+      [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://e-tawjihi.ma",
+        "https://event.e-tawjihi.ma",
+        "https://www.event.e-tawjihi.ma",
+      ]
     allow_methods: ["GET", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]
     allow_headers: ["Content-Type", "Authorization", "X-Requested-With"]
     expose_headers: ["Link"]
