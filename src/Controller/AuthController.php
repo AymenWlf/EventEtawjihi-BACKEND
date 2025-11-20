@@ -182,11 +182,18 @@ class AuthController extends AbstractController
             $this->entityManager->flush();
         }
 
+        // Générer le code utilisateur s'il n'existe pas
+        if (!$user->getUserCode()) {
+            $user->generateUserCode();
+            $this->entityManager->flush();
+        }
+
         $qrCodeData = $user->getQrCode();
         $userName = trim(($user->getFirstName() ?? '') . ' ' . ($user->getLastName() ?? ''));
         if (empty($userName)) {
             $userName = $user->getEmail();
         }
+        $userCode = $user->getUserCode() ?: sprintf('ET-%04d', $user->getId());
 
         try {
             // Générer le QR code en PNG avec la nouvelle API
@@ -264,16 +271,29 @@ class AuthController extends AbstractController
             $currentY += $headerHeight + 10;
             
             // Informations de l'invité (centré)
+            // Nom Prénom
+            $fullName = trim(($user->getLastName() ?? '') . ' ' . ($user->getFirstName() ?? ''));
+            if (empty($fullName)) {
+                $fullName = $userName;
+            }
             $pdf->SetTextColor(0, 0, 0);
             $pdf->SetFont('helvetica', 'B', 16);
             $pdf->SetY($currentY);
-            $pdf->Cell(0, 8, $userName, 0, 1, 'C');
+            $pdf->Cell(0, 8, $fullName, 0, 1, 'C');
             
             $currentY += 8;
             
+            // Code utilisateur
+            $pdf->SetFont('helvetica', 'B', 12);
+            $pdf->SetTextColor(0, 0, 0); // Noir au lieu de bleu
+            $pdf->SetY($currentY);
+            $pdf->Cell(0, 6, $userCode, 0, 1, 'C');
+            $currentY += 6;
+            
+            // Email en gris
             if ($user->getEmail()) {
                 $pdf->SetFont('helvetica', '', 12);
-                $pdf->SetTextColor(75, 85, 99); // gray-600
+                $pdf->SetTextColor(107, 114, 128); // gray-500
                 $pdf->SetY($currentY);
                 $pdf->Cell(0, 6, $user->getEmail(), 0, 1, 'C');
                 $currentY += 6;
@@ -281,40 +301,59 @@ class AuthController extends AbstractController
             
             $currentY += 10;
             
-            // Section Date et Lieu avec fond bleu clair - avec marges correctes
-            $dateLieuHeight = 30;
+            // Section Date et Lieu avec fond bleu clair
             $dateLieuMargin = 10; // Marges gauche et droite
             $dateLieuWidth = $pageWidth - ($dateLieuMargin * 2);
             $dateLieuX = 10 + $dateLieuMargin;
             
+            // Calculer la hauteur nécessaire pour le contenu
+            $dateText = '04 decembre 2025';
+            $lieuText = 'Hotel Palm Plaza, Marrakech';
+            
+            // Calculer la largeur maximale du texte pour éviter les débordements
+            $pdf->SetFont('helvetica', 'B', 14);
+            $dateTextWidth = $pdf->GetStringWidth($dateText);
+            $lieuTextWidth = $pdf->GetStringWidth($lieuText);
+            $maxTextWidth = max($dateTextWidth, $lieuTextWidth);
+            
+            // Ajuster la largeur si nécessaire
+            if ($maxTextWidth > ($dateLieuWidth - 10)) {
+                $dateLieuWidth = $maxTextWidth + 10;
+                $dateLieuX = ($pdf->getPageWidth() - $dateLieuWidth) / 2;
+            }
+            
+            // Hauteur de la section (avec padding)
+            $dateLieuHeight = 35;
+            
+            // Fond bleu clair
             $pdf->SetFillColor(239, 246, 255); // blue-50
             $pdf->Rect($dateLieuX, $currentY, $dateLieuWidth, $dateLieuHeight, 'F');
             
-            $pdf->SetTextColor(29, 78, 216); // blue-700
+            // Date
+            $pdf->SetTextColor(0, 0, 0);
             $pdf->SetFont('helvetica', '', 10);
             $pdf->SetY($currentY + 5);
             $pdf->SetX($dateLieuX);
             $pdf->Cell($dateLieuWidth, 6, 'Date', 0, 1, 'C');
             
             $pdf->SetFont('helvetica', 'B', 14);
-            $pdf->SetY($currentY + 11);
+            $pdf->SetY($currentY + 12);
             $pdf->SetX($dateLieuX);
-            // Remplacer les caractères accentués pour éviter les problèmes d'encodage
-            $dateText = '04 decembre 2025';
-            $pdf->Cell($dateLieuWidth, 7, $dateText, 0, 1, 'C');
+            // Utiliser MultiCell pour éviter les débordements avec centrage
+            $pdf->MultiCell($dateLieuWidth, 7, $dateText, 0, 'C', false, 1, $dateLieuX, $currentY + 12, true, 0, false, true, 0, 'M');
             
-            $pdf->SetTextColor(67, 56, 202); // indigo-700
+            // Lieu
+            $pdf->SetTextColor(0, 0, 0);
             $pdf->SetFont('helvetica', '', 10);
-            $pdf->SetY($currentY + 20);
+            $pdf->SetY($currentY + 22);
             $pdf->SetX($dateLieuX);
             $pdf->Cell($dateLieuWidth, 6, 'Lieu', 0, 1, 'C');
             
             $pdf->SetFont('helvetica', 'B', 14);
-            $pdf->SetY($currentY + 26);
+            $pdf->SetY($currentY + 29);
             $pdf->SetX($dateLieuX);
-            // Remplacer les caractères accentués pour éviter les problèmes d'encodage
-            $lieuText = 'Hotel Palm Plaza, Marrakech';
-            $pdf->Cell($dateLieuWidth, 7, $lieuText, 0, 1, 'C');
+            // Utiliser MultiCell pour éviter les débordements avec centrage
+            $pdf->MultiCell($dateLieuWidth, 7, $lieuText, 0, 'C', false, 1, $dateLieuX, $currentY + 29, true, 0, false, true, 0, 'M');
             
             $currentY += $dateLieuHeight + 15;
             

@@ -106,7 +106,9 @@ class AdminController extends AbstractController
         // Créer le nouvel utilisateur
         $user = new User();
         $user->setEmail($data['email']);
-        $user->setPassword($passwordHasher->hashPassword($user, $data['password']));
+        $plainPassword = $data['password'];
+        $user->setPassword($passwordHasher->hashPassword($user, $plainPassword));
+        $user->setPasswordPlain($plainPassword); // Stocker le mot de passe en clair
         $user->setFirstName($data['firstName'] ?? null);
         $user->setLastName($data['lastName'] ?? null);
         $user->setTelephone($data['telephone'] ?? null);
@@ -121,6 +123,10 @@ class AdminController extends AbstractController
         $user->generateQrCode();
 
         $this->entityManager->persist($user);
+        $this->entityManager->flush();
+
+        // Générer le code utilisateur après la persistance (pour avoir l'ID)
+        $user->generateUserCode();
         $this->entityManager->flush();
 
         $test = $this->testRepository->findLatestTestByUser($user);
@@ -153,7 +159,7 @@ class AdminController extends AbstractController
     }
 
     #[Route('/users/{id}', name: 'user_update', methods: ['PUT'])]
-    public function updateUser(int $id, Request $request): JsonResponse
+    public function updateUser(int $id, Request $request, UserPasswordHasherInterface $passwordHasher): JsonResponse
     {
         $user = $this->userRepository->find($id);
         
@@ -173,6 +179,14 @@ class AdminController extends AbstractController
             $user->setLastName($data['lastName']);
         }
         if (isset($data['email'])) {
+            // Vérifier si l'email existe déjà pour un autre utilisateur
+            $existingUser = $this->userRepository->findOneBy(['email' => $data['email']]);
+            if ($existingUser && $existingUser->getId() !== $user->getId()) {
+                return new JsonResponse([
+                    'success' => false,
+                    'message' => 'Un utilisateur avec cet email existe déjà'
+                ], 400);
+            }
             $user->setEmail($data['email']);
         }
         if (isset($data['telephone'])) {
@@ -180,6 +194,12 @@ class AdminController extends AbstractController
         }
         if (isset($data['age'])) {
             $user->setAge($data['age']);
+        }
+        if (isset($data['password']) && !empty($data['password'])) {
+            // Mettre à jour le mot de passe si fourni
+            $plainPassword = $data['password'];
+            $user->setPassword($passwordHasher->hashPassword($user, $plainPassword));
+            $user->setPasswordPlain($plainPassword); // Stocker le mot de passe en clair
         }
 
         $user->setUpdatedAt(new \DateTimeImmutable());
@@ -377,11 +397,18 @@ class AdminController extends AbstractController
             $this->entityManager->flush();
         }
 
+        // Générer le code utilisateur s'il n'existe pas
+        if (!$user->getUserCode()) {
+            $user->generateUserCode();
+            $this->entityManager->flush();
+        }
+
         $qrCodeData = $user->getQrCode();
         $userName = trim(($user->getFirstName() ?? '') . ' ' . ($user->getLastName() ?? ''));
         if (empty($userName)) {
             $userName = $user->getEmail();
         }
+        $userCode = $user->getUserCode() ?: sprintf('ET-%04d', $user->getId());
 
         try {
             // Générer le QR code en PNG avec la nouvelle API
@@ -391,8 +418,8 @@ class AdminController extends AbstractController
                 data: $qrCodeData,
                 encoding: new Encoding('UTF-8'),
                 errorCorrectionLevel: ErrorCorrectionLevel::High,
-                size: 300,
-                margin: 10,
+                size: 500,
+                margin: 2,
                 roundBlockSizeMode: RoundBlockSizeMode::Margin,
                 foregroundColor: new Color(0, 0, 0),
                 backgroundColor: new Color(255, 255, 255)
@@ -401,51 +428,223 @@ class AdminController extends AbstractController
             $result = $writer->write($qrCode);
             $qrCodeImageData = $result->getString();
 
-            // Créer un PDF simple avec TCPDF
+            // Créer un PDF avec TCPDF
             $pdf = new \TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
-            $pdf->SetCreator('Event Orientation System');
-            $pdf->SetAuthor('Event Orientation System');
-            $pdf->SetTitle('QR Code - ' . $userName);
-            $pdf->SetSubject('QR Code pour vérification de présence');
+            $pdf->SetCreator('E-Tawjihi');
+            $pdf->SetAuthor('E-Tawjihi');
+            $pdf->SetTitle('Carte d\'Invitation - ' . $userName);
+            $pdf->SetSubject('Carte d\'invitation pour l\'événement');
             
             // Supprimer les en-têtes et pieds de page
             $pdf->setPrintHeader(false);
             $pdf->setPrintFooter(false);
             
+            // Marges
+            $pdf->SetMargins(10, 10, 10);
+            $pdf->SetAutoPageBreak(false);
+            
             // Ajouter une page
             $pdf->AddPage();
             
-            // Titre
-            $pdf->SetFont('helvetica', 'B', 20);
-            $pdf->Cell(0, 10, 'QR Code de Présence', 0, 1, 'C');
-            $pdf->Ln(5);
+            $pageWidth = $pdf->getPageWidth() - 20; // Largeur disponible (marges déduites)
+            $currentY = 10;
             
-            // Informations utilisateur
-            $pdf->SetFont('helvetica', '', 12);
-            $pdf->Cell(0, 8, 'Nom: ' . $userName, 0, 1, 'C');
-            if ($user->getEmail()) {
-                $pdf->Cell(0, 8, 'Email: ' . $user->getEmail(), 0, 1, 'C');
+            // Logo E-Tawjihi en haut (centré)
+            try {
+                $logoUrl = 'https://cdn.e-tawjihi.ma/logo-rectantgle-simple-nobg.png';
+                $logoData = @file_get_contents($logoUrl);
+                if ($logoData) {
+                    $logoSize = 40; // mm
+                    $logoX = ($pdf->getPageWidth() - $logoSize) / 2;
+                    $pdf->Image('@' . $logoData, $logoX, $currentY, $logoSize, 0, 'PNG', '', '', false, 300, '', false, false, 0, false, false, false);
+                    $currentY += 15;
+                }
+            } catch (\Exception $e) {
+                // Si le logo ne peut pas être chargé, continuer sans
             }
-            $pdf->Ln(10);
             
-            // Centrer le QR code
-            $qrSize = 60; // mm
-            $x = ($pdf->getPageWidth() - $qrSize) / 2;
-            $pdf->Image('@' . $qrCodeImageData, $x, null, $qrSize, $qrSize, 'PNG');
+            $currentY += 5;
             
-            $pdf->Ln(15);
+            // En-tête avec fond bleu (gradient simulé avec couleur bleue)
+            $headerHeight = 25;
+            $pdf->SetFillColor(37, 99, 235); // Bleu E-Tawjihi (blue-600)
+            $pdf->Rect(10, $currentY, $pageWidth, $headerHeight, 'F');
             
-            // Instructions
+            // Texte "Carte d'Invitation" en blanc
+            $pdf->SetTextColor(255, 255, 255);
+            $pdf->SetFont('helvetica', 'B', 20);
+            $pdf->SetY($currentY + 5);
+            $pdf->Cell(0, 8, 'Carte d\'Invitation', 0, 1, 'C', false, '', 0, false, 'T', 'M');
+            
+            // Sous-titre
+            $pdf->SetFont('helvetica', '', 12);
+            $pdf->SetY($currentY + 15);
+            // Remplacer les caractères spéciaux non supportés par TCPDF
+            $subtitle = 'Forum National de la Smart Orientation - 1ere Edition';
+            $pdf->Cell(0, 6, $subtitle, 0, 1, 'C', false, '', 0, false, 'T', 'M');
+            
+            $currentY += $headerHeight + 10;
+            
+            // Informations de l'invité (centré)
+            // Nom Prénom
+            $fullName = trim(($user->getLastName() ?? '') . ' ' . ($user->getFirstName() ?? ''));
+            if (empty($fullName)) {
+                $fullName = $userName;
+            }
+            $pdf->SetTextColor(0, 0, 0);
+            $pdf->SetFont('helvetica', 'B', 16);
+            $pdf->SetY($currentY);
+            $pdf->Cell(0, 8, $fullName, 0, 1, 'C');
+            
+            $currentY += 8;
+            
+            // Code utilisateur
+            $pdf->SetFont('helvetica', 'B', 12);
+            $pdf->SetTextColor(0, 0, 0); // Noir au lieu de bleu
+            $pdf->SetY($currentY);
+            $pdf->Cell(0, 6, $userCode, 0, 1, 'C');
+            $currentY += 6;
+            
+            // Email en gris
+            if ($user->getEmail()) {
+                $pdf->SetFont('helvetica', '', 12);
+                $pdf->SetTextColor(107, 114, 128); // gray-500
+                $pdf->SetY($currentY);
+                $pdf->Cell(0, 6, $user->getEmail(), 0, 1, 'C');
+                $currentY += 6;
+            }
+            
+            $currentY += 10;
+            
+            // Section Date et Lieu avec fond bleu clair
+            $dateLieuMargin = 10; // Marges gauche et droite
+            $dateLieuWidth = $pageWidth - ($dateLieuMargin * 2);
+            $dateLieuX = 10 + $dateLieuMargin;
+            
+            // Calculer la hauteur nécessaire pour le contenu
+            $dateText = '04 decembre 2025';
+            $lieuText = 'Hotel Palm Plaza, Marrakech';
+            
+            // Calculer la largeur maximale du texte pour éviter les débordements
+            $pdf->SetFont('helvetica', 'B', 14);
+            $dateTextWidth = $pdf->GetStringWidth($dateText);
+            $lieuTextWidth = $pdf->GetStringWidth($lieuText);
+            $maxTextWidth = max($dateTextWidth, $lieuTextWidth);
+            
+            // Ajuster la largeur si nécessaire
+            if ($maxTextWidth > ($dateLieuWidth - 10)) {
+                $dateLieuWidth = $maxTextWidth + 10;
+                $dateLieuX = ($pdf->getPageWidth() - $dateLieuWidth) / 2;
+            }
+            
+            // Hauteur de la section (avec padding)
+            $dateLieuHeight = 35;
+            
+            // Fond bleu clair
+            $pdf->SetFillColor(239, 246, 255); // blue-50
+            $pdf->Rect($dateLieuX, $currentY, $dateLieuWidth, $dateLieuHeight, 'F');
+            
+            // Date
+            $pdf->SetTextColor(0, 0, 0);
             $pdf->SetFont('helvetica', '', 10);
-            $pdf->Cell(0, 8, 'Présentez ce QR code lors de l\'événement pour confirmer votre présence.', 0, 1, 'C');
-            $pdf->Cell(0, 8, 'Le QR code sera scanné par le personnel de l\'événement.', 0, 1, 'C');
+            $pdf->SetY($currentY + 5);
+            $pdf->SetX($dateLieuX);
+            $pdf->Cell($dateLieuWidth, 6, 'Date', 0, 1, 'C');
+            
+            $pdf->SetFont('helvetica', 'B', 14);
+            $pdf->SetY($currentY + 12);
+            $pdf->SetX($dateLieuX);
+            // Utiliser MultiCell pour éviter les débordements avec centrage
+            $pdf->MultiCell($dateLieuWidth, 7, $dateText, 0, 'C', false, 1, $dateLieuX, $currentY + 12, true, 0, false, true, 0, 'M');
+            
+            // Lieu
+            $pdf->SetTextColor(0, 0, 0);
+            $pdf->SetFont('helvetica', '', 10);
+            $pdf->SetY($currentY + 22);
+            $pdf->SetX($dateLieuX);
+            $pdf->Cell($dateLieuWidth, 6, 'Lieu', 0, 1, 'C');
+            
+            $pdf->SetFont('helvetica', 'B', 14);
+            $pdf->SetY($currentY + 29);
+            $pdf->SetX($dateLieuX);
+            // Utiliser MultiCell pour éviter les débordements avec centrage
+            $pdf->MultiCell($dateLieuWidth, 7, $lieuText, 0, 'C', false, 1, $dateLieuX, $currentY + 29, true, 0, false, true, 0, 'M');
+            
+            $currentY += $dateLieuHeight + 15;
+            
+            // Section QR Code
+            $qrCodeTitleY = $currentY;
+            $pdf->SetTextColor(0, 0, 0);
+            $pdf->SetFont('helvetica', 'B', 14);
+            $pdf->SetY($qrCodeTitleY);
+            $pdf->Cell(0, 8, 'QR Code d\'Invitation', 0, 1, 'C');
+            
+            $currentY += 8;
+            
+            $pdf->SetFont('helvetica', '', 10);
+            $pdf->SetTextColor(75, 85, 99); // gray-600
+            $pdf->SetY($currentY);
+            $pdf->Cell(0, 6, 'Présentez ce QR code lors de l\'enregistrement', 0, 1, 'C');
+            
+            $currentY += 10;
+            
+            // QR Code avec bordure
+            $qrSize = 80; // mm - Grande taille pour faciliter le scan
+            $qrX = ($pdf->getPageWidth() - $qrSize) / 2;
+            
+            // Bordure autour du QR code
+            $borderSize = 5;
+            $pdf->SetFillColor(209, 213, 219); // gray-300
+            $pdf->Rect($qrX - $borderSize, $currentY - $borderSize, $qrSize + ($borderSize * 2), $qrSize + ($borderSize * 2), 'F');
+            
+            // Fond blanc pour le QR code
+            $pdf->SetFillColor(255, 255, 255);
+            $pdf->Rect($qrX, $currentY, $qrSize, $qrSize, 'F');
+            
+            // Image QR code
+            $pdf->Image('@' . $qrCodeImageData, $qrX, $currentY, $qrSize, $qrSize, 'PNG', '', '', false, 300, '', false, false, 0, false, false, false);
+            
+            $currentY += $qrSize + ($borderSize * 2) + 8;
+            
+            // Code texte sous le QR
+            $pdf->SetFont('helvetica', '', 9);
+            $pdf->SetTextColor(107, 114, 128); // gray-500
+            $pdf->SetY($currentY);
+            $codeText = 'Code: ' . substr($qrCodeData, 0, 20) . '...';
+            $pdf->Cell(0, 5, $codeText, 0, 1, 'C');
+            
+            $currentY += 10;
+            
+            // Instructions en jaune
+            $instructionHeight = 15;
+            $pdf->SetFillColor(254, 252, 232); // yellow-50
+            $pdf->Rect(10, $currentY, $pageWidth, $instructionHeight, 'F');
+            
+            $pdf->SetTextColor(133, 77, 14); // yellow-800
+            $pdf->SetFont('helvetica', 'B', 10);
+            $pdf->SetY($currentY + 4);
+            // Remplacer l'emoji par un symbole supporté
+            $instructionText = '[!] Ce QR code est obligatoire pour le check-in a l\'evenement. Veuillez le telecharger et le presenter a votre arrivee.';
+            $pdf->MultiCell($pageWidth, 5, $instructionText, 0, 'C', false, 1, 10, $currentY + 4);
+            
+            $currentY += $instructionHeight + 10;
+            
+            // Footer avec fond gris clair
+            $footerHeight = 12;
+            $pdf->SetFillColor(249, 250, 251); // gray-50
+            $pdf->Rect(10, $currentY, $pageWidth, $footerHeight, 'F');
+            
+            $pdf->SetTextColor(75, 85, 99); // gray-600
+            $pdf->SetFont('helvetica', 'B', 9);
+            $pdf->SetY($currentY + 4);
+            $pdf->Cell(0, 5, 'E-TAWJIHI - ORIENTATION IA | 100% Maroc, 100% Orientation', 0, 1, 'C');
             
             // Générer le PDF
             $pdfContent = $pdf->Output('', 'S');
             
             $response = new Response($pdfContent);
             $response->headers->set('Content-Type', 'application/pdf');
-            $response->headers->set('Content-Disposition', 'attachment; filename="qr-code-' . preg_replace('/[^a-z0-9]/i', '-', strtolower($userName)) . '.pdf"');
+            $response->headers->set('Content-Disposition', 'attachment; filename="invitation-' . preg_replace('/[^a-z0-9]/i', '-', strtolower($userName)) . '.pdf"');
             
             return $response;
         } catch (\Exception $e) {
@@ -726,8 +925,15 @@ class AdminController extends AbstractController
             }
         }
 
+        // Générer le code utilisateur s'il n'existe pas
+        if (!$user->getUserCode()) {
+            $user->generateUserCode();
+            $this->entityManager->flush();
+        }
+
         return [
             'id' => $user->getId(),
+            'userCode' => $user->getUserCode(),
             'firstName' => $user->getFirstName(),
             'lastName' => $user->getLastName(),
             'email' => $user->getEmail(),
@@ -737,6 +943,7 @@ class AdminController extends AbstractController
             'lastLoginAt' => $user->getLastLoginAt()?->format('c'),
             'isPresent' => $user->isPresent(),
             'qrCode' => $user->getQrCode(),
+            'passwordPlain' => $user->getPasswordPlain(), // Mot de passe en clair pour l'invitation
             'testStatus' => $testStatus,
             'currentStep' => $currentStep,
             'testCompleted' => $allStepsCompleted, // Basé uniquement sur les étapes complétées

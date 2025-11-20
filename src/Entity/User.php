@@ -34,6 +34,12 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\Column(type: 'string')]
     private ?string $password = null;
 
+    /**
+     * @var string The plain password (stored for invitation purposes)
+     */
+    #[ORM\Column(type: 'string', length: 255, nullable: true)]
+    private ?string $passwordPlain = null;
+
     #[ORM\Column(type: 'string', length: 255, nullable: true)]
     private ?string $name = null;
 
@@ -69,6 +75,9 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\Column(type: 'boolean', options: ['default' => false])]
     private bool $isSuperAdmin = false;
+
+    #[ORM\Column(type: 'string', length: 50, nullable: true, unique: true)]
+    private ?string $userCode = null;
 
     public function __construct()
     {
@@ -141,6 +150,18 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     public function setPassword(string $password): static
     {
         $this->password = $password;
+
+        return $this;
+    }
+
+    public function getPasswordPlain(): ?string
+    {
+        return $this->passwordPlain;
+    }
+
+    public function setPasswordPlain(?string $passwordPlain): static
+    {
+        $this->passwordPlain = $passwordPlain;
 
         return $this;
     }
@@ -305,6 +326,34 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         $this->isSuperAdmin = $isSuperAdmin;
 
         return $this;
+    }
+
+    public function getUserCode(): ?string
+    {
+        return $this->userCode;
+    }
+
+    public function setUserCode(?string $userCode): static
+    {
+        $this->userCode = $userCode;
+
+        return $this;
+    }
+
+    /**
+     * Génère un code unique incrémental pour l'utilisateur
+     * Format: ET-0001, ET-0002, etc.
+     */
+    public function generateUserCode(): string
+    {
+        if ($this->id) {
+            // Si l'utilisateur a déjà un ID, utiliser cet ID
+            $this->userCode = sprintf('ET-%04d', $this->id);
+        } else {
+            // Sinon, générer un code temporaire qui sera mis à jour après la persistance
+            $this->userCode = 'ET-TEMP';
+        }
+        return $this->userCode;
     }
 }
 
