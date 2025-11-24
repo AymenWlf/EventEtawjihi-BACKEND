@@ -112,6 +112,7 @@ class AdminController extends AbstractController
         $user->setFirstName($data['firstName'] ?? null);
         $user->setLastName($data['lastName'] ?? null);
         $user->setTelephone($data['telephone'] ?? null);
+        $user->setWhatsappNumber($data['whatsappNumber'] ?? null);
         if (isset($data['age'])) {
             $user->setAge((int) $data['age']);
         }
@@ -191,6 +192,9 @@ class AdminController extends AbstractController
         }
         if (isset($data['telephone'])) {
             $user->setTelephone($data['telephone']);
+        }
+        if (isset($data['whatsappNumber'])) {
+            $user->setWhatsappNumber($data['whatsappNumber']);
         }
         if (isset($data['age'])) {
             $user->setAge($data['age']);
@@ -676,6 +680,12 @@ class AdminController extends AbstractController
             ], 404);
         }
 
+        // Générer le code utilisateur s'il n'existe pas
+        if (!$user->getUserCode()) {
+            $user->generateUserCode();
+            $this->entityManager->flush();
+        }
+
         // Mettre à jour la présence
         $user->setIsPresent(true);
         $this->entityManager->flush();
@@ -733,6 +743,7 @@ class AdminController extends AbstractController
             'data' => [
                 'user' => [
                     'id' => $user->getId(),
+                    'userCode' => $user->getUserCode(),
                     'firstName' => $user->getFirstName(),
                     'lastName' => $user->getLastName(),
                     'email' => $user->getEmail()
@@ -938,6 +949,7 @@ class AdminController extends AbstractController
             'lastName' => $user->getLastName(),
             'email' => $user->getEmail(),
             'telephone' => $user->getTelephone(),
+            'whatsappNumber' => $user->getWhatsappNumber(),
             'age' => $user->getAge(),
             'createdAt' => $user->getCreatedAt()?->format('c'),
             'lastLoginAt' => $user->getLastLoginAt()?->format('c'),

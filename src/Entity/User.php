@@ -79,6 +79,9 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\Column(type: 'string', length: 50, nullable: true, unique: true)]
     private ?string $userCode = null;
 
+    #[ORM\Column(type: 'string', length: 50, nullable: true)]
+    private ?string $whatsappNumber = null;
+
     public function __construct()
     {
         $this->createdAt = new \DateTimeImmutable();
@@ -354,6 +357,18 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
             $this->userCode = 'ET-TEMP';
         }
         return $this->userCode;
+    }
+
+    public function getWhatsappNumber(): ?string
+    {
+        return $this->whatsappNumber;
+    }
+
+    public function setWhatsappNumber(?string $whatsappNumber): static
+    {
+        $this->whatsappNumber = $whatsappNumber;
+
+        return $this;
     }
 }
 

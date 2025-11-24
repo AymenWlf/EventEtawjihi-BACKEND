@@ -270,6 +270,32 @@ class OrientationTestController extends AbstractController
             $test->setTotalQuestions(($test->getTotalQuestions() ?? 0) + $stepData['totalQuestions']);
         }
 
+        // Si c'est l'étape personalInfo, mettre à jour les informations de l'utilisateur
+        if ($stepName === 'personalInfo' && isset($stepData['personalInfo'])) {
+            $personalInfo = $stepData['personalInfo'];
+            
+            // Mettre à jour le téléphone si fourni
+            if (isset($personalInfo['phoneNumber']) && !empty($personalInfo['phoneNumber'])) {
+                $user->setTelephone($personalInfo['phoneNumber']);
+            }
+            
+            // Mettre à jour le WhatsApp si fourni
+            if (isset($personalInfo['whatsappNumber']) && !empty($personalInfo['whatsappNumber'])) {
+                $user->setWhatsappNumber($personalInfo['whatsappNumber']);
+            }
+            
+            // Mettre à jour le prénom et nom si fournis
+            if (isset($personalInfo['firstName']) && !empty($personalInfo['firstName'])) {
+                $user->setFirstName($personalInfo['firstName']);
+            }
+            if (isset($personalInfo['lastName']) && !empty($personalInfo['lastName'])) {
+                $user->setLastName($personalInfo['lastName']);
+            }
+            if (isset($personalInfo['age']) && !empty($personalInfo['age'])) {
+                $user->setAge((int) $personalInfo['age']);
+            }
+        }
+
         $this->entityManager->flush();
 
         return new JsonResponse([
